@@ -10,40 +10,65 @@ const streetSwipeDAG = require('./streetswipe-dag')
 // },
 
 const getPoiRef = (db, poiId) => db.collection('pois').doc(poiId)
+const getAggregatedAnnotationsRef = (db) => db.collection('aggregates').doc('annotations')
 
-async function updateAnnotationCount (db, poiId, data, increment) {
-  const type = data.type
-
+async function updateAnnotationCount (db, poiId, type, data, increment) {
   const poiRef = getPoiRef(db, poiId)
+  const aggregatedAnnotationsRef = getAggregatedAnnotationsRef(db)
 
-  const poi = await poiRef.get()
+  return db.runTransaction(async (transaction) => {
+    const poiDoc = await transaction.get(poiRef)
 
-  let nextAnnotations = {}
+    const aggregatedAnnotationsDoc = await transaction.get(aggregatedAnnotationsRef)
+    let aggregatedAnnotations = aggregatedAnnotationsDoc.data() || {}
 
-  if (streetSwipeDAG[type]) {
-    for (let [nextType, testAnnotation] of Object.entries(streetSwipeDAG[type])) {
-      if (testAnnotation(data)) {
-        nextAnnotations[`annotations.${nextType}`] = 0
+    let nextAnnotations = {}
+
+    if (data && streetSwipeDAG[type]) {
+      for (let [nextType, testAnnotation] of Object.entries(streetSwipeDAG[type])) {
+        if (testAnnotation(data)) {
+          nextAnnotations[`annotations.${nextType}`] = 0
+
+          const nextTypeAggregatedAnnotations = aggregatedAnnotations[nextType] || {}
+          aggregatedAnnotations = {
+            ...aggregatedAnnotations,
+            [nextType]: {
+              ...nextTypeAggregatedAnnotations,
+              0: (nextTypeAggregatedAnnotations[0] || 0) + 1
+            }
+          }
+        }
       }
     }
-  }
 
-  // Add field nextAnnotations = ['facade', 'check']
+    // Add field nextAnnotations = ['facade', 'check'] ??
 
-  let updatedPoiRef
-  if (increment !== undefined) {
-    const count = (poi.annotations && poi.annotations[type]) || 0
-    updatedPoiRef = await poiRef.update(Object.assign({
-      [`annotations.${type}`]: count + increment
-    }, nextAnnotations))
-  } else {
-    // Delete annotation
-    // updatedPoiRef = poiRef.update({
-    //   [`annotations.${type}`]: FieldValue.delete()
-    // })
-  }
+    let updatedPoiRef
+    if (increment !== undefined) {
+      const currentAnnotations = poiDoc.data().annotations || {}
+      const count = (currentAnnotations[type]) || 0
+      const newCount = count + increment
 
-  return updatedPoiRef
+      const typeAggregatedAnnotations = aggregatedAnnotations[type] || {}
+      aggregatedAnnotations = {
+        ...aggregatedAnnotations,
+        [type]: {
+          ...typeAggregatedAnnotations,
+          [count]: (typeAggregatedAnnotations[count] || 1) - 1,
+          [newCount]: (typeAggregatedAnnotations[newCount] || 0) + 1
+        }
+      }
+
+      await transaction.update(aggregatedAnnotationsRef, aggregatedAnnotations)
+
+      updatedPoiRef = await transaction.update(poiRef, {
+        ...nextAnnotations,
+        [`annotations.${type}`]: newCount
+      })
+    }
+
+    return updatedPoiRef
+  })
 }
 
 module.exports = function (db) {
@@ -59,13 +84,16 @@ module.exports = function (db) {
 
       if (dataBefore && dataAfter) {
         // Annotation updated
-        updatedPoiRef = await updateAnnotationCount(db, poiId, dataAfter, 0)
+        const type = dataAfter.type
+        updatedPoiRef = await updateAnnotationCount(db, poiId, type, dataAfter, 0)
       } else if (dataAfter) {
         // Annotation created
-        updatedPoiRef = await updateAnnotationCount(db, poiId, dataAfter, 1)
+        const type = dataAfter.type
+        updatedPoiRef = await updateAnnotationCount(db, poiId, type, dataAfter, 1)
       } else {
         // Annotation deleted
-        updatedPoiRef = await updateAnnotationCount(db, poiId, dataBefore, -1)
+        const type = dataBefore.type
+        updatedPoiRef = await updateAnnotationCount(db, poiId, type, undefined, -1)
       }
 
       return updatedPoiRef

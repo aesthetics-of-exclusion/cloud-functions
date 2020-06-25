@@ -1,10 +1,17 @@
+const admin = require('firebase-admin')
 const functions = require('firebase-functions')
+const H = require('highland')
 const express = require('express')
 const cors = require('cors')
 const bodyParser = require('body-parser')
+const {BigQuery} = require('@google-cloud/bigquery')
 
 function createRandom () {
   return Math.round(Math.random() * Number.MAX_SAFE_INTEGER)
+}
+
+function timestampToDate (timestamp) {
+  return new admin.firestore.Timestamp(timestamp._seconds, timestamp._nanoseconds).toDate()
 }
 
 async function getAnnotations (db, poiId) {
@@ -24,11 +31,22 @@ async function getAnnotations (db, poiId) {
   }
 }
 
-async function randomPoi (db, annotationType) {
+function poiQuery (db, annotationType, source) {
+  let query = db.collection('pois')
+    .where(`annotations.${annotationType}`, '==', 0)
+
+  if (source) {
+    query = query
+      .where('source', '==', source)
+  }
+
+  return query
+}
+
+async function randomPoi (db, annotationType, source) {
   const random = createRandom()
 
-  const lessThanRandomQuery = db.collection('pois')
-    .where(`annotations.${annotationType}`, '==', 0)
+  const lessThanRandomQuery = poiQuery(db, annotationType, source)
     .where('random', '<=', random)
     .orderBy('random', 'desc')
     .limit(1)
@@ -39,8 +57,7 @@ async function randomPoi (db, annotationType) {
   if (lessThanRandomQuerySnapshot.docs.length) {
     poiRef = lessThanRandomQuerySnapshot.docs[0]
   } else {
-    const moreThanRandomQuery = db.collection('pois')
-      .where(`annotations.${annotationType}`, '==', 0)
+    const moreThanRandomQuery = poiQuery(db, annotationType, source)
       .where('random', '>=', random)
       .orderBy('random')
       .limit(1)
@@ -78,6 +95,7 @@ async function saveAnnotation (db, poiId, annotationType, data, annotationId) {
     poiId,
     type: annotationType,
     data,
+    random: createRandom(),
     dateCreated,
     dateUpdated: new Date()
   })
@@ -91,9 +109,46 @@ module.exports = function (db) {
   app.use(cors({ origin: true }))
   app.use(bodyParser.json())
 
+  app.get('/all.ndjson', async (req, res) => {
+    const bigQuery = new BigQuery({ projectId: 'streetswipe-aoe' })
+
+    const query = `SELECT * FROM streetswipe.annotations_raw_latest`
+
+    const stream = H()
+
+    bigQuery.createQueryStream(query)
+      .on('error', console.error)
+      .on('data', (row) => stream.write(row))
+      .on('end', () => stream.end())
+
+    stream
+      .map((row) => JSON.parse(row.data))
+      .map((annotation) => Object.assign(annotation, {
+        dateCreated: timestampToDate(annotation.dateCreated),
+        dateUpdated: timestampToDate(annotation.dateUpdated)
+      }))
+      .group('poiId')
+      .map((groups) => Object.entries(groups).map(([poiId, annotations]) => ({
+        id: poiId,
+        annotations
+      })))
+      .flatten()
+      .map(JSON.stringify)
+      .intersperse('\n')
+      .pipe(res)
+  })
+
+  app.get('/aggregated', async (req, res) => {
+    const getAggregatedAnnotationsRef = db.collection('aggregates').doc('annotations')
+    const aggregatedAnnotations = await getAggregatedAnnotationsRef.get()
+    res.send(aggregatedAnnotations.data())
+  })
+
   app.get('/next/:type', async (req, res) => {
     const type = req.params.type
-    const poiRef = await randomPoi(db, type)
+    const source = req.query.source
+
+    const poiRef = await randomPoi(db, type, source)
 
     if (poiRef) {
       const annotations = await getAnnotations(db, poiRef.id)
