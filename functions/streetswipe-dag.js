@@ -2,14 +2,14 @@ module.exports = {
   osm: {
     address: (annotation) => true
   },
-  failliesementsdossiers: {
+  faillissementsdossier: {
     address: (annotation) => true
   },
   address: {
     screenshot: (annotation) => annotation.data.address
   },
   screenshot: {
-    facade: (annotation) => annotation.data.screenshotUrl
+    check: (annotation) => annotation.data.screenshotUrl
   },
   check: {
     facade: (annotation) => annotation.data.valid
