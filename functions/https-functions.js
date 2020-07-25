@@ -148,6 +148,14 @@ module.exports = function (db) {
     const type = req.params.type
     const source = req.query.source
 
+    // If we would like to add a city parameter to check-screenshots and
+    // facade-cutter (and possibly to other apps/tools), we could add a query
+    // parameter to this API, and only return POIs from a specific city.
+    // Adding a parameter to the query in the randomPoi function can be done with
+    // a single extra where clause, but it's important to also add a new Composite
+    // index to the Firebase database:
+    // https://console.firebase.google.com/project/streetswipe-aoe/database/firestore/indexes
+
     const poiRef = await randomPoi(db, type, source)
 
     if (poiRef) {
