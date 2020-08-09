@@ -84,8 +84,8 @@ async function saveAnnotation (db, poiId, annotationType, data, annotationId) {
   let dateCreated = new Date()
 
   if (annotationId) {
-    const annotation = await annotationRef.get()
-    const oldDateCreated = annotation.data().dateCreated
+    const annotationDoc = await annotationRef.get()
+    const oldDateCreated = annotationDoc.exists && annotationDoc.data().dateCreated
     if (oldDateCreated) {
       dateCreated = oldDateCreated
     }
