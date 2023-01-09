@@ -15,7 +15,7 @@
   "dependencies": {
     "@google-cloud/bigquery": "^4.7.0",
     "@google-cloud/firestore": "^3.8.1",
-    "firebase-admin": "^8.10.0",
+    "firebase-admin": "^11.4.1",
     "firebase-functions": "^3.7.0",
     "highland": "^2.13.5",
     "ramda": "^0.27.0"
